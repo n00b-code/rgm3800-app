@@ -8,6 +8,19 @@ download, parser, exporters) carried over from the original CLI tool.
 
 A command-line mode is included as well.
 
+## Download (macOS)
+
+Grab the ready-built app from the
+[**Releases**](https://github.com/n00b-code/rgm3800-app/releases/latest) page
+(`RGM-3800-macos.zip`), unzip, and move `RGM-3800.app` to Applications.
+
+The app is **not code-signed**, so on first launch macOS Gatekeeper warns.
+Either right-click the app → **Open** → **Open**, or run once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/RGM-3800.app
+```
+
 ## Features
 
 - Serial-port dropdown with **Refresh** and **Connect** + live connection status
