@@ -1,0 +1,5 @@
+# Serial communication with the logger.
+pyserial>=3.5
+
+# Native desktop window (uses the macOS WebKit/Cocoa backend via pyobjc).
+pywebview>=5.0
