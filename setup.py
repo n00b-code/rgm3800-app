@@ -4,11 +4,19 @@
     python setup.py py2app        # full standalone build -> dist/RGM-3800.app
     python setup.py py2app -A     # fast alias build for development only
 
+The app name can be overridden for custom/personalised builds:
+
+    APP_NAME="RGM-3800 für Inge" python setup.py py2app
+
 The web/ frontend is bundled both as part of the package and as data files in
 Resources/web; rgm3800app.app._web_index() resolves either layout at runtime.
 """
 
+import os
+
 from setuptools import setup
+
+APP_NAME = os.environ.get("APP_NAME", "RGM-3800")
 
 APP = ["run_app.py"]
 
@@ -26,8 +34,8 @@ OPTIONS = {
     "packages": ["rgm3800app", "webview"],
     "includes": ["serial", "serial.tools.list_ports"],
     "plist": {
-        "CFBundleName": "RGM-3800",
-        "CFBundleDisplayName": "RGM-3800",
+        "CFBundleName": APP_NAME[:15],
+        "CFBundleDisplayName": APP_NAME,
         "CFBundleIdentifier": "de.n00b.rgm3800",
         "CFBundleShortVersionString": "0.1.2",
         "CFBundleVersion": "0.1.2",
@@ -38,7 +46,7 @@ OPTIONS = {
 }
 
 setup(
-    name="RGM-3800",
+    name=APP_NAME,
     app=APP,
     data_files=DATA_FILES,
     options={"py2app": OPTIONS},

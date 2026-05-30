@@ -23,6 +23,22 @@ import webview
 from .core import api
 
 
+def _app_title() -> str:
+    """Window title: use the bundle's display name when running as an .app."""
+    if getattr(sys, "frozen", False):
+        import plistlib
+        plist = os.path.normpath(
+            os.path.join(os.path.dirname(sys.executable), "..", "Info.plist"))
+        try:
+            with open(plist, "rb") as fh:
+                info = plistlib.load(fh)
+            return (info.get("CFBundleDisplayName")
+                    or info.get("CFBundleName") or "RGM-3800")
+        except Exception:
+            pass
+    return "RGM-3800"
+
+
 def _web_index() -> str:
     """Locate web/index.html in both dev and bundled (.app) layouts."""
     here = os.path.dirname(os.path.abspath(__file__))
@@ -164,7 +180,7 @@ def run_gui() -> None:
     api_obj = Api()
     index = _web_index()
     window = webview.create_window(
-        "RGM-3800",
+        _app_title(),
         url=index,
         js_api=api_obj,
         width=900,
