@@ -15,11 +15,33 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 
 import webview
 
 from .core import api
+
+
+def _web_index() -> str:
+    """Locate web/index.html in both dev and bundled (.app) layouts."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [os.path.join(here, "web", "index.html")]
+    if getattr(sys, "frozen", False):
+        res = os.path.normpath(
+            os.path.join(os.path.dirname(sys.executable), "..", "Resources"))
+        candidates += [
+            os.path.join(res, "web", "index.html"),
+            os.path.join(res, "rgm3800app", "web", "index.html"),
+        ]
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass:
+            candidates.append(
+                os.path.join(meipass, "rgm3800app", "web", "index.html"))
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return candidates[0]
 
 
 class Api:
@@ -120,8 +142,7 @@ class Api:
 
 def run_gui() -> None:
     api_obj = Api()
-    web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
-    index = os.path.join(web_dir, "index.html")
+    index = _web_index()
     window = webview.create_window(
         "RGM-3800",
         url=index,
