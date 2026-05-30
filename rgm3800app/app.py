@@ -48,7 +48,7 @@ class Api:
     def __init__(self) -> None:
         self.ctrl = api.Controller()
         self._window: webview.Window | None = None
-        self._downloading = False
+        self._busy = False
 
     def set_window(self, window: webview.Window) -> None:
         self._window = window
@@ -82,38 +82,41 @@ class Api:
         return {"ok": True, "connected": self.ctrl.is_connected,
                 "port": self.ctrl.port}
 
-    def download(self) -> dict:
-        """Kick off a background download; results arrive via events."""
-        if self._downloading:
-            return {"ok": False, "error": "Download läuft bereits."}
+    def list_tracks(self) -> dict:
+        """Read track headers in the background; result via onTrackList event."""
         if not self.ctrl.is_connected:
             return {"ok": False, "error": "Nicht verbunden."}
-        self._downloading = True
+        if self._busy:
+            return {"ok": False, "error": "Bitte warten – Gerät ist beschäftigt."}
+        self._busy = True
 
         def worker() -> None:
             try:
                 def progress(done, total, number):
-                    self._emit("onProgress",
-                               {"done": done, "total": total, "track": number})
-                rows = self.ctrl.download_all(progress=progress)
-                self._emit("onDownloadDone", {"ok": True, "tracks": rows})
+                    self._emit("onListProgress", {"done": done, "total": total})
+                rows = self.ctrl.list_tracks(progress=progress)
+                self._emit("onTrackList", {"ok": True, "tracks": rows})
             except api.CoreError as exc:
-                self._emit("onDownloadDone", {"ok": False, "error": str(exc)})
+                self._emit("onTrackList", {"ok": False, "error": str(exc)})
             except Exception as exc:  # pragma: no cover - defensive
-                self._emit("onDownloadDone",
+                self._emit("onTrackList",
                            {"ok": False, "error": f"Unerwarteter Fehler: {exc}"})
             finally:
-                self._downloading = False
+                self._busy = False
 
         threading.Thread(target=worker, daemon=True).start()
         return {"ok": True}
 
     def export(self, indices: list[int], fmt: str) -> dict:
+        """Ask for a save path, then download *only* the selected tracks and
+        write them. Progress and completion arrive via events."""
         fmt = (fmt or "").lower()
         if fmt not in api.EXPORT_FORMATS:
             return {"ok": False, "error": f"Unbekanntes Format: {fmt}"}
         if not indices:
             return {"ok": False, "error": "Keine Tracks ausgewählt."}
+        if self._busy:
+            return {"ok": False, "error": "Bitte warten – Gerät ist beschäftigt."}
 
         ext = api.EXPORT_EXT[fmt]
         suggested = f"rgm3800_tracks{ext}"
@@ -124,20 +127,37 @@ class Api:
             )
         except Exception as exc:  # pragma: no cover - defensive
             return {"ok": False, "error": f"Dialog-Fehler: {exc}"}
-
         if not result:
             return {"ok": False, "cancelled": True}
         path = result if isinstance(result, str) else result[0]
         if not path.lower().endswith(ext):
             path += ext
 
-        try:
-            info = self.ctrl.export([int(i) for i in indices], fmt, path)
-            return {"ok": True, "result": info}
-        except api.CoreError as exc:
-            return {"ok": False, "error": str(exc)}
-        except OSError as exc:
-            return {"ok": False, "error": f"Schreibfehler: {exc}"}
+        idxs = [int(i) for i in indices]
+        self._busy = True
+
+        def worker() -> None:
+            try:
+                def progress(done, total, number):
+                    self._emit("onProgress",
+                               {"done": done, "total": total, "track": number})
+                updates = self.ctrl.download(idxs, progress=progress)
+                self._emit("onTracksUpdated", {"updates": updates})
+                info = self.ctrl.export(idxs, fmt, path)
+                self._emit("onExportDone", {"ok": True, "result": info})
+            except api.CoreError as exc:
+                self._emit("onExportDone", {"ok": False, "error": str(exc)})
+            except OSError as exc:
+                self._emit("onExportDone",
+                           {"ok": False, "error": f"Schreibfehler: {exc}"})
+            except Exception as exc:  # pragma: no cover - defensive
+                self._emit("onExportDone",
+                           {"ok": False, "error": f"Unerwarteter Fehler: {exc}"})
+            finally:
+                self._busy = False
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"ok": True, "started": True}
 
 
 def run_gui() -> None:

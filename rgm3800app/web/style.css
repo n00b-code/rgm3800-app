@@ -159,6 +159,7 @@ tbody td {
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover:not(.empty) { background: var(--accent-soft); }
 .col-check { width: 38px; text-align: center; }
+.col-time { width: 64px; color: var(--muted); }
 .col-num, .col-dist { text-align: right; }
 td.col-num, td.col-dist { text-align: right; }
 td.col-check { text-align: center; }

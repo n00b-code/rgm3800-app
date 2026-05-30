@@ -65,6 +65,17 @@ class SerialTransport:
     def read(self, size: int = 1) -> bytes:
         return self._ser.read(size)
 
+    def reset_input(self) -> None:
+        """Discard any stale bytes waiting in the OS input buffer.
+
+        Safe because the protocol is strictly request/response: anything sitting
+        in the buffer before we send a fresh command is leftover/noise.
+        """
+        try:
+            self._ser.reset_input_buffer()
+        except Exception:  # pragma: no cover - best effort
+            pass
+
     def close(self) -> None:
         try:
             self._ser.close()
@@ -103,6 +114,9 @@ class MockTransport:
         chunk = bytes(self._outbox[:size])
         del self._outbox[:size]
         return chunk
+
+    def reset_input(self) -> None:
+        self._outbox.clear()
 
     def close(self) -> None:
         self._outbox.clear()

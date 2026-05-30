@@ -39,22 +39,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Verbunden: {status['port']} · {status['num_tracks']} Tracks "
               f"· Intervall {status['interval']}s")
 
-        def progress(done, total, number):
-            print(f"\r  {done}/{total} Tracks", end="", file=sys.stderr)
-
-        rows = ctrl.download_all(progress=progress)
-        print(file=sys.stderr)
-        print(f"{len(rows)} Tracks geladen, "
-              f"{sum(r['num_points'] for r in rows)} Punkte gesamt.")
-
+        # Phase 1: read headers (fast, no point data).
+        headers = ctrl.list_tracks()
         if args.tracks == "all":
-            indices = [r["index"] for r in rows]
+            indices = [h["index"] for h in headers]
         else:
             try:
                 indices = [int(x) for x in args.tracks.split(",")]
             except ValueError:
                 _err(f"ungültige --tracks-Angabe: {args.tracks!r}")
                 return 2
+            valid = {h["index"] for h in headers}
+            bad = [i for i in indices if i not in valid]
+            if bad:
+                _err(f"unbekannte Track-Indizes: {bad}")
+                return 2
+
+        # Phase 2: download only the selected tracks.
+        def progress(done, total, number):
+            print(f"\r  lade {done}/{total} Tracks", end="", file=sys.stderr)
+
+        ctrl.download(indices, progress=progress)
+        print(file=sys.stderr)
 
         ext = api.EXPORT_EXT[args.format]
         out = args.output or f"rgm3800_tracks{ext}"

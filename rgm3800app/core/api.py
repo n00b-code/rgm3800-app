@@ -4,6 +4,13 @@ This is the single facade the GUI (pywebview) and the CLI both call. It owns
 the serial connection and the downloaded data, and exposes plain
 functions/values (dicts, dataclasses) so no UI code ever touches the protocol
 layer directly.
+
+Two-phase workflow (so the user can pick before downloading):
+  1. ``list_tracks()``     -- read only the per-track headers (date, #points)
+                              via PROY101; no point data transferred yet.
+  2. ``download(indices)`` -- download and parse the point data for the
+                              selected tracks only; results are cached.
+  3. ``export(...)``       -- write the (already downloaded) selected tracks.
 """
 
 from __future__ import annotations
@@ -23,22 +30,27 @@ RGM_PID = 0x2303
 EXPORT_FORMATS = ("gpx", "csv", "kml")
 EXPORT_EXT = {"gpx": ".gpx", "csv": ".csv", "kml": ".kml"}
 
+_MONTHS_DE = ["", "Jan", "Feb", "Mär", "Apr", "Mai", "Jun",
+              "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
+
 
 class CoreError(Exception):
     """Any user-facing error from the controller (device, timeout, usage)."""
 
 
 @dataclass
-class TrackInfo:
-    """Per-track summary handed to the UI (one row in the tracks table)."""
+class TrackHeader:
+    """Lightweight per-track info shown right after connecting (no points yet)."""
 
-    index: int          # position in the downloaded list (selection key)
-    number: int         # track number on the device
-    date: str           # ISO date, e.g. "2025-05-12"
-    start_time: str     # "HH:MM" of the first point (UTC)
-    datetime_iso: str   # full ISO start timestamp, or ""
-    num_points: int
-    distance_km: float
+    index: int           # position / selection key
+    number: int          # track number on the device
+    date: str            # ISO date "2025-05-12"
+    year: int            # 2025
+    date_label: str      # "12.05.2025"
+    num_points: int      # from the header (PROY101)
+    downloaded: bool      # whether point data is cached yet
+    distance_km: float | None  # filled in after download
+    start_time: str       # "HH:MM", filled in after download
 
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
@@ -60,11 +72,11 @@ def track_distance_km(points: list[Waypoint]) -> float:
 
 def list_ports() -> list[dict]:
     """Return ``[{device, description, is_rgm}]`` for available serial ports."""
-    ports: list[dict] = []
     try:
         from serial.tools import list_ports as _lp
     except ImportError as exc:  # pragma: no cover
         raise CoreError("pyserial is not installed.") from exc
+    ports: list[dict] = []
     for p in _lp.comports():
         is_rgm = (p.vid == RGM_VID and p.pid == RGM_PID)
         desc = p.description or ""
@@ -84,13 +96,14 @@ def autodetect_port() -> str | None:
 
 
 class Controller:
-    """Owns the connection and the most-recently downloaded tracks."""
+    """Owns the connection, the track headers, and a point-data cache."""
 
     def __init__(self) -> None:
         self._device: RGM3800 | None = None
         self._port: str | None = None
-        self._tracks: list[TrackInfo] = []
-        self._points: list[list[Waypoint]] = []
+        self._metas: list = []                 # list[device.Track] headers
+        self._headers: list[TrackHeader] = []
+        self._cache: dict[int, list[Waypoint]] = {}  # index -> points
 
     # -- connection ---------------------------------------------------------
     @property
@@ -103,10 +116,7 @@ class Controller:
 
     def connect(self, port: str | None = None, baud: int = 115200,
                 timeout: float = 1.0) -> dict:
-        """Open the serial port and confirm a logger answers.
-
-        Returns a small status dict ``{port, num_tracks, interval, format}``.
-        """
+        """Open the serial port and confirm a logger answers."""
         self.disconnect()
         port = port or autodetect_port()
         if not port:
@@ -125,12 +135,12 @@ class Controller:
         except TransportError as exc:
             device.close()
             raise CoreError(
-                f"Keine Antwort vom Gerät an {port}. Eingeschaltet? "
-                f"({exc})"
+                f"Keine Antwort vom Gerät an {port}. Eingeschaltet? ({exc})"
             ) from exc
 
         self._device = device
         self._port = port
+        self._metas, self._headers, self._cache = [], [], {}
         return {
             "port": port,
             "num_tracks": info["num_tracks"],
@@ -143,75 +153,108 @@ class Controller:
             self._device.close()
         self._device = None
         self._port = None
+        self._metas, self._headers, self._cache = [], [], {}
 
-    # -- download -----------------------------------------------------------
-    def download_all(self, progress=None) -> list[dict]:
-        """Download every stored track, parse it, compute distances.
-
-        ``progress(done, total, track_number)`` is called after each track.
-        Returns the track summaries as dicts (JSON-friendly for the bridge).
-        """
+    # -- phase 1: list track headers (no point data) -----------------------
+    def list_tracks(self, progress=None) -> list[dict]:
+        """Read per-track headers only (date + #points). Fast: no points."""
         if self._device is None:
             raise CoreError("Nicht verbunden.")
-
         info = self._device.get_info()
         total = info["num_tracks"]
         if total == 0:
-            self._tracks, self._points = [], []
+            self._metas, self._headers, self._cache = [], [], {}
             raise CoreError("Das Gerät hat keine gespeicherten Tracks (leer).")
 
-        metas = self._device.list_tracks()
-        tracks: list[TrackInfo] = []
-        points_all: list[list[Waypoint]] = []
-
-        for i, meta in enumerate(metas):
-            points = self._device.get_waypoints(meta)
-            points_all.append(points)
-            dt = points[0].datetime if points else None
-            tracks.append(TrackInfo(
+        metas, headers = [], []
+        for i in range(total):
+            meta = self._device.get_track(i)   # PROY101,i -- header only
+            metas.append(meta)
+            headers.append(TrackHeader(
                 index=i,
                 number=meta.number,
                 date=meta.date.isoformat(),
-                start_time=dt.strftime("%H:%M") if dt else "",
-                datetime_iso=dt.strftime("%Y-%m-%dT%H:%M:%SZ") if dt else "",
-                num_points=len(points),
-                distance_km=round(track_distance_km(points), 2),
+                year=meta.date.year,
+                date_label=meta.date.strftime("%d.%m.%Y"),
+                num_points=meta.count,
+                downloaded=False,
+                distance_km=None,
+                start_time="",
             ))
             if progress:
                 progress(i + 1, total, meta.number)
 
-        self._tracks = tracks
-        self._points = points_all
-        return [asdict(t) for t in tracks]
+        self._metas = metas
+        self._headers = headers
+        self._cache = {}
+        return [asdict(h) for h in headers]
 
     @property
-    def tracks(self) -> list[dict]:
-        return [asdict(t) for t in self._tracks]
+    def headers(self) -> list[dict]:
+        return [asdict(h) for h in self._headers]
 
-    # -- export -------------------------------------------------------------
+    # -- phase 2: download point data for selected tracks ------------------
+    def download(self, indices: list[int], progress=None) -> list[dict]:
+        """Download & parse points for the selected tracks; cache them.
+
+        Returns per-track updates ``{index, num_points, distance_km,
+        start_time, downloaded}`` for the UI to fill in.
+        """
+        if not self._metas:
+            raise CoreError("Keine Track-Liste geladen.")
+        idxs = sorted(set(int(i) for i in indices))
+        if not idxs:
+            raise CoreError("Keine Tracks ausgewählt.")
+        if idxs[0] < 0 or idxs[-1] >= len(self._metas):
+            raise CoreError("Ungültige Track-Auswahl.")
+
+        updates, total = [], len(idxs)
+        for n, i in enumerate(idxs, 1):
+            if i not in self._cache:
+                self._cache[i] = self._device.get_waypoints(self._metas[i])
+            pts = self._cache[i]
+            dt = pts[0].datetime if pts else None
+            header = self._headers[i]
+            header.downloaded = True
+            header.num_points = len(pts)
+            header.distance_km = round(track_distance_km(pts), 2)
+            header.start_time = dt.strftime("%H:%M") if dt else ""
+            updates.append({
+                "index": i,
+                "num_points": header.num_points,
+                "distance_km": header.distance_km,
+                "start_time": header.start_time,
+                "downloaded": True,
+            })
+            if progress:
+                progress(n, total, self._metas[i].number)
+        return updates
+
+    # -- phase 3: export the (downloaded) selected tracks ------------------
     def export(self, indices: list[int], fmt: str, path: str) -> dict:
-        """Write the selected tracks to ``path`` in ``fmt`` (one combined file)."""
+        """Write the selected tracks to ``path`` (one combined file).
+
+        The selected tracks must already be downloaded (see :meth:`download`).
+        """
         fmt = fmt.lower()
         if fmt not in EXPORT_FORMATS:
             raise CoreError(f"Unbekanntes Format: {fmt!r}")
-        if not self._points:
-            raise CoreError("Keine Tracks geladen.")
-        if not indices:
+        idxs = sorted(set(int(i) for i in indices))
+        if not idxs:
             raise CoreError("Keine Tracks ausgewählt.")
+        missing = [i for i in idxs if i not in self._cache]
+        if missing:
+            raise CoreError("Ausgewählte Tracks sind noch nicht geladen.")
 
-        try:
-            selected = [self._points[i] for i in sorted(set(indices))]
-            selected_meta = [self._tracks[i] for i in sorted(set(indices))]
-        except IndexError as exc:
-            raise CoreError("Ungültige Track-Auswahl.") from exc
+        selected = [self._cache[i] for i in idxs]
+        selected_meta = [self._headers[i] for i in idxs]
 
         if fmt == "gpx":
             data = export.build_gpx(selected)
         elif fmt == "csv":
             data = export.build_csv(selected)
         else:  # kml
-            names = [f"Track {m.number} ({m.date} {m.start_time})"
-                     for m in selected_meta]
+            names = [f"Track {m.number} ({m.date_label})" for m in selected_meta]
             data = export.build_kml(selected, names)
 
         with open(path, "w", encoding="utf-8", newline="") as fh:
@@ -219,3 +262,10 @@ class Controller:
 
         return {"path": path, "format": fmt, "tracks": len(selected),
                 "points": sum(len(p) for p in selected)}
+
+    # -- convenience for the CLI -------------------------------------------
+    def download_all(self, progress=None) -> list[dict]:
+        """List + download every track (used by the CLI)."""
+        headers = self.list_tracks()
+        self.download([h["index"] for h in headers], progress=progress)
+        return self.headers

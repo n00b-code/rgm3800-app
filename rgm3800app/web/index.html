@@ -21,19 +21,9 @@
       </div>
     </section>
 
-    <!-- Download -->
-    <section class="card">
-      <h2>Download</h2>
-      <button id="btn-download" class="btn btn-wide" disabled>Tracklogs laden</button>
-      <div class="progress" id="progress-wrap" hidden>
-        <div class="progress-bar" id="progress-bar"></div>
-        <span class="progress-label" id="progress-label"></span>
-      </div>
-    </section>
-
     <!-- Tracks -->
     <section class="card">
-      <h2>Tracks</h2>
+      <h2>Tracks auf dem Gerät</h2>
       <div class="row select-actions">
         <button id="btn-all" class="link" disabled>Alle auswählen</button>
         <button id="btn-none" class="link" disabled>Auswahl aufheben</button>
@@ -45,12 +35,13 @@
             <tr>
               <th class="col-check"><input type="checkbox" id="check-header" disabled></th>
               <th class="col-date">Datum</th>
+              <th class="col-time">Start</th>
               <th class="col-num">Punkte</th>
               <th class="col-dist">Distanz</th>
             </tr>
           </thead>
           <tbody id="tracks-body">
-            <tr class="empty"><td colspan="4">Noch keine Tracks geladen.</td></tr>
+            <tr class="empty"><td colspan="5">Noch nicht verbunden.</td></tr>
           </tbody>
         </table>
       </div>
@@ -58,13 +49,17 @@
 
     <!-- Export -->
     <section class="card">
-      <h2>Export</h2>
+      <h2>Herunterladen &amp; Exportieren</h2>
       <div class="row export-row">
         <label class="radio"><input type="radio" name="fmt" value="gpx" checked> GPX</label>
         <label class="radio"><input type="radio" name="fmt" value="csv"> CSV</label>
         <label class="radio"><input type="radio" name="fmt" value="kml"> KML</label>
         <span class="grow"></span>
-        <button id="btn-export" class="btn" disabled>Exportieren …</button>
+        <button id="btn-export" class="btn" disabled>Auswahl herunterladen &amp; exportieren …</button>
+      </div>
+      <div class="progress" id="progress-wrap" hidden>
+        <div class="progress-bar" id="progress-bar"></div>
+        <span class="progress-label" id="progress-label"></span>
       </div>
     </section>
   </main>

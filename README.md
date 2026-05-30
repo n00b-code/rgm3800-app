@@ -24,11 +24,15 @@ xattr -dr com.apple.quarantine /Applications/RGM-3800.app
 ## Features
 
 - Serial-port dropdown with **Refresh** and **Connect** + live connection status
-- **Load tracklogs** with a non-blocking progress bar (current / total + %)
-- Track table (date, points, distance) with **multi-select**: per-row
-  checkboxes plus *Select all* / *Deselect*
-- Export **only the selected tracks** as one combined file, via the native
-  macOS save dialog; formats **GPX / CSV / KML**
+- On connect, the **list of tracks is shown immediately** (date incl. **year**,
+  number of points) — read from the device headers, *without* downloading the
+  point data yet
+- Track table with **multi-select**: per-row checkboxes plus *Select all* /
+  *Deselect*
+- **Only the selected tracks are downloaded** (with a non-blocking progress bar,
+  current / total + %) and written as one combined file via the native macOS
+  save dialog; formats **GPX / CSV / KML**. Distance per track is filled in once
+  it has been downloaded.
 - KML uses `gx:Track` so each point keeps its timestamp (animatable on Google
   Earth's time slider)
 - Long downloads run in a background thread — the UI stays responsive
@@ -44,7 +48,8 @@ rgm3800app/
     device.py      RGM3800 protocol (PROY/LOG over 115200 baud)
     waypoint.py    binary record parser
     export.py      GPX / CSV / KML builders
-    api.py         Controller facade: list_ports, connect, download_all, export
+    api.py         Controller facade: list_ports, connect, list_tracks (headers),
+                   download (selected only), export
   app.py           pywebview app + js_api bridge (threads, progress, save dialog)
   cli.py           command-line mode (same Controller)
   web/             frontend: index.html, style.css, app.js (vanilla JS)
@@ -166,9 +171,10 @@ included. Resolve the `web/` path via `sys._MEIPASS` at runtime.
 ## Status
 
 Verified end-to-end against real hardware (RGM-3800 via PL2303 on macOS 26 /
-Apple Silicon): connect, download of 140 tracks with live progress, multi-select,
-and export to GPX, CSV and KML. KML validated structurally (`gx:Track` with
-matching `<when>`/`<gx:coord>` per point).
+Apple Silicon): connect, instant track listing (140 tracks, incl. year),
+multi-select, download of *only* the selected tracks with live progress, and
+export to GPX, CSV and KML. KML validated structurally (`gx:Track` with matching
+`<when>`/`<gx:coord>` per point).
 
 ## Credits
 

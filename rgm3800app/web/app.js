@@ -1,13 +1,11 @@
 "use strict";
 
-// ---- element refs ---------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const portSelect = $("port-select");
 const btnRefresh = $("btn-refresh");
 const btnConnect = $("btn-connect");
 const connStatus = $("conn-status");
 const connText = $("conn-text");
-const btnDownload = $("btn-download");
 const progressWrap = $("progress-wrap");
 const progressBar = $("progress-bar");
 const progressLabel = $("progress-label");
@@ -21,11 +19,10 @@ const statusbar = $("statusbar");
 const toast = $("toast");
 
 let connected = false;
-let tracks = []; // [{index,number,date,start_time,num_points,distance_km}]
+let tracks = []; // [{index,number,date_label,year,num_points,distance_km,start_time,downloaded}]
 
 // ---- helpers --------------------------------------------------------------
 function api() { return window.pywebview.api; }
-
 function setStatus(text) { statusbar.textContent = text; }
 
 let toastTimer = null;
@@ -45,12 +42,15 @@ function setConn(state, text) {
   connText.textContent = text;
 }
 
-function fmtDate(iso, startTime) {
-  // iso "2025-05-12" -> "12.05." plus time
-  const [y, m, d] = iso.split("-");
-  return `${d}.${m}.` + (startTime ? ` ${startTime}` : "");
+function showProgress(label, pct) {
+  progressWrap.hidden = false;
+  progressBar.style.width = (pct == null ? 0 : pct) + "%";
+  progressLabel.textContent = label;
 }
+function hideProgress() { progressWrap.hidden = true; }
+
 function fmtDist(km) {
+  if (km == null) return "—";
   return km >= 0.05 ? km.toFixed(1).replace(".", ",") + " km" : "—";
 }
 
@@ -62,8 +62,7 @@ async function refreshPorts() {
   if (!res.ok) { showToast(res.error, "err"); return; }
   if (res.ports.length === 0) {
     const o = document.createElement("option");
-    o.textContent = "Kein Anschluss gefunden";
-    o.disabled = true;
+    o.textContent = "Kein Anschluss gefunden"; o.disabled = true;
     portSelect.appendChild(o);
     setStatus("Kein serieller Anschluss gefunden");
     return;
@@ -85,7 +84,8 @@ async function toggleConnect() {
     btnConnect.textContent = "Verbinden";
     btnConnect.classList.remove("connected");
     setConn("idle", "Nicht verbunden");
-    btnDownload.disabled = true;
+    setTrackRows([]);
+    tracksBody.innerHTML = '<tr class="empty"><td colspan="5">Nicht verbunden.</td></tr>';
     setStatus("Verbindung getrennt");
     return;
   }
@@ -105,48 +105,35 @@ async function toggleConnect() {
   btnConnect.textContent = "Trennen";
   btnConnect.classList.add("connected");
   setConn("ok", `Verbunden mit RGM-3800 (${res.status.num_tracks} Tracks)`);
-  btnDownload.disabled = false;
-  setStatus(`Verbunden · ${res.status.num_tracks} Tracks auf dem Gerät · ${res.status.port}`);
+  setStatus(`Verbunden · ${res.status.port} · lese Track-Liste …`);
+  // Immediately fetch the track headers (fast, no point data yet).
+  loadTrackList();
 }
 
-// ---- download -------------------------------------------------------------
-async function startDownload() {
-  btnDownload.disabled = true;
-  progressWrap.hidden = false;
-  progressBar.style.width = "0%";
-  progressLabel.textContent = "Starte …";
-  setStatus("Lade Tracklogs …");
-  setTrackRows([]); // clear
-  const res = await api().download();
-  if (!res.ok) {
-    showToast(res.error, "err");
-    progressWrap.hidden = true;
-    btnDownload.disabled = false;
-    setStatus("Download fehlgeschlagen");
-  }
+// ---- track list (headers only) -------------------------------------------
+async function loadTrackList() {
+  showProgress("Lese Track-Liste …", 0);
+  tracksBody.innerHTML = '<tr class="empty"><td colspan="5">Lese Track-Liste …</td></tr>';
+  const res = await api().list_tracks();
+  if (!res.ok) { hideProgress(); showToast(res.error, "err"); setStatus(res.error); }
 }
 
-window.onProgress = function (p) {
+window.onListProgress = function (p) {
   const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
-  progressBar.style.width = pct + "%";
-  progressLabel.textContent = `${p.done} / ${p.total} Tracks · ${pct} %`;
+  showProgress(`Lese Track-Liste … ${p.done} / ${p.total}`, pct);
 };
 
-window.onDownloadDone = function (res) {
-  btnDownload.disabled = false;
+window.onTrackList = function (res) {
+  hideProgress();
   if (!res.ok) {
-    progressWrap.hidden = true;
     showToast(res.error, "err");
     setStatus(res.error);
+    tracksBody.innerHTML = `<tr class="empty"><td colspan="5">${res.error}</td></tr>`;
     return;
   }
   tracks = res.tracks;
   setTrackRows(tracks);
-  progressBar.style.width = "100%";
-  progressLabel.textContent = `${tracks.length} / ${tracks.length} Tracks · 100 %`;
-  setTimeout(() => { progressWrap.hidden = true; }, 700);
-  showToast(`${tracks.length} Tracks geladen`, "ok");
-  setStatus(`Bereit · ${tracks.length} Tracks geladen`);
+  setStatus(`Bereit · ${tracks.length} Tracks auf dem Gerät · Tracks auswählen und exportieren`);
 };
 
 // ---- tracks table ---------------------------------------------------------
@@ -158,7 +145,7 @@ function setTrackRows(rows) {
   checkHeader.disabled = !enable;
   checkHeader.checked = false;
   if (!enable) {
-    tracksBody.innerHTML = '<tr class="empty"><td colspan="4">Noch keine Tracks geladen.</td></tr>';
+    tracksBody.innerHTML = '<tr class="empty"><td colspan="5">Keine Tracks.</td></tr>';
     updateSelection();
     return;
   }
@@ -167,15 +154,15 @@ function setTrackRows(rows) {
     tr.dataset.index = t.index;
     tr.innerHTML = `
       <td class="col-check"><input type="checkbox" class="row-check" data-index="${t.index}"></td>
-      <td class="col-date">${fmtDate(t.date, t.start_time)}</td>
-      <td class="col-num">${t.num_points.toLocaleString("de-DE")}</td>
-      <td class="col-dist">${fmtDist(t.distance_km)}</td>`;
+      <td class="col-date">${t.date_label}</td>
+      <td class="col-time" data-field="time">${t.start_time || "—"}</td>
+      <td class="col-num" data-field="num">${t.num_points.toLocaleString("de-DE")}</td>
+      <td class="col-dist" data-field="dist">${fmtDist(t.distance_km)}</td>`;
     tracksBody.appendChild(tr);
   }
   tracksBody.querySelectorAll(".row-check").forEach((cb) => {
     cb.addEventListener("change", onRowToggle);
   });
-  // clicking a row toggles its checkbox
   tracksBody.querySelectorAll("tr").forEach((tr) => {
     tr.addEventListener("click", (e) => {
       if (e.target.tagName === "INPUT") return;
@@ -214,7 +201,7 @@ function selectAll(on) {
   onRowToggle();
 }
 
-// ---- export ---------------------------------------------------------------
+// ---- export (download selected + write) -----------------------------------
 async function doExport() {
   const indices = selectedIndices();
   if (indices.length === 0) {
@@ -222,26 +209,58 @@ async function doExport() {
     return;
   }
   const fmt = document.querySelector('input[name="fmt"]:checked').value;
-  setStatus(`Exportiere ${indices.length} Track(s) als ${fmt.toUpperCase()} …`);
   btnExport.disabled = true;
+  setStatus(`Lade ${indices.length} ausgewählte(n) Track(s) …`);
   const res = await api().export(indices, fmt);
-  btnExport.disabled = false;
-  if (res.cancelled) { setStatus("Export abgebrochen"); return; }
-  if (!res.ok) { showToast(res.error, "err"); setStatus("Export fehlgeschlagen"); return; }
-  const r = res.result;
-  showToast(`${r.tracks} Track(s) → ${fmt.toUpperCase()} gespeichert`, "ok");
-  setStatus(`Gespeichert: ${r.path} (${r.points.toLocaleString("de-DE")} Punkte)`);
+  if (res.cancelled) { btnExport.disabled = false; setStatus("Export abgebrochen"); return; }
+  if (!res.ok) {
+    btnExport.disabled = false;
+    showToast(res.error, "err");
+    setStatus("Export fehlgeschlagen");
+    return;
+  }
+  showProgress("Starte …", 0);
 }
+
+window.onProgress = function (p) {
+  const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+  showProgress(`Lade Track ${p.done} / ${p.total} · ${pct} %`, pct);
+};
+
+window.onTracksUpdated = function (msg) {
+  for (const u of msg.updates) {
+    const row = tracksBody.querySelector(`tr[data-index="${u.index}"]`);
+    if (!row) continue;
+    row.querySelector('[data-field="time"]').textContent = u.start_time || "—";
+    row.querySelector('[data-field="num"]').textContent = u.num_points.toLocaleString("de-DE");
+    row.querySelector('[data-field="dist"]').textContent = fmtDist(u.distance_km);
+    const t = tracks.find((x) => x.index === u.index);
+    if (t) Object.assign(t, u);
+  }
+};
+
+window.onExportDone = function (res) {
+  btnExport.disabled = false;
+  if (!res.ok) {
+    hideProgress();
+    showToast(res.error, "err");
+    setStatus(res.error);
+    return;
+  }
+  showProgress("Fertig", 100);
+  setTimeout(hideProgress, 700);
+  const r = res.result;
+  showToast(`${r.tracks} Track(s) → ${r.format.toUpperCase()} gespeichert`, "ok");
+  setStatus(`Gespeichert: ${r.path} (${r.points.toLocaleString("de-DE")} Punkte)`);
+};
 
 // ---- wire up --------------------------------------------------------------
 btnRefresh.addEventListener("click", refreshPorts);
 btnConnect.addEventListener("click", toggleConnect);
-btnDownload.addEventListener("click", startDownload);
 btnAll.addEventListener("click", () => selectAll(true));
 btnNone.addEventListener("click", () => selectAll(false));
 checkHeader.addEventListener("change", (e) => selectAll(e.target.checked));
 btnExport.addEventListener("click", doExport);
 
 window.addEventListener("pywebviewready", refreshPorts);
-// Fallback if the event already fired before listener attached.
 if (window.pywebview && window.pywebview.api) refreshPorts();

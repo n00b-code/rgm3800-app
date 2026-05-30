@@ -78,6 +78,12 @@ class RGM3800:
             import sys
             print(msg, file=sys.stderr)
 
+    def _reset_input(self) -> None:
+        """Drop stale bytes before sending a command (request/response protocol)."""
+        reset = getattr(self.t, "reset_input", None)
+        if callable(reset):
+            reset()
+
     def _read_line(self) -> bytes | None:
         """Read one ``$...*CC\\r\\n`` frame and return its body.
 
@@ -133,6 +139,7 @@ class RGM3800:
         """Send a command and return the first response line starting with
         ``prefix`` (the LOG body). Retries on timeout."""
         for _ in range(retries):
+            self._reset_input()
             self.t.write(build_command(command))
             self._log(f">> {command}")
             # Allow some noise before the line we want.
@@ -205,6 +212,7 @@ class RGM3800:
                   ) -> list[waypoint.Waypoint]:
         rlen = waypoint.record_length(fmt)
         for _ in range(5):
+            self._reset_input()
             self.t.write(build_command(f"PROY102,{address},{fmt},{amount}"))
             self._log(f">> PROY102,{address},{fmt},{amount}")
             collected = bytearray()
