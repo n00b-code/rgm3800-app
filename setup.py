@@ -22,14 +22,15 @@ DATA_FILES = [
 
 OPTIONS = {
     "argv_emulation": False,
+    "iconfile": "rgm3800app/assets/icon.icns",
     "packages": ["rgm3800app", "webview"],
     "includes": ["serial", "serial.tools.list_ports"],
     "plist": {
         "CFBundleName": "RGM-3800",
         "CFBundleDisplayName": "RGM-3800",
         "CFBundleIdentifier": "de.n00b.rgm3800",
-        "CFBundleShortVersionString": "0.1.1",
-        "CFBundleVersion": "0.1.1",
+        "CFBundleShortVersionString": "0.1.2",
+        "CFBundleVersion": "0.1.2",
         "NSHumanReadableCopyright": "MIT License",
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",

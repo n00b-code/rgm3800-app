@@ -8,6 +8,9 @@ venv/
 build/
 dist/
 
+# Intermediate icon sizes (icon.icns + icon.png are committed)
+*.iconset/
+
 # Exported tracks may contain personal location data -- never commit.
 *.gpx
 *.csv
