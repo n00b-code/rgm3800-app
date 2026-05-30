@@ -34,7 +34,7 @@ OPTIONS = {
     "packages": ["rgm3800app", "webview"],
     "includes": ["serial", "serial.tools.list_ports"],
     "plist": {
-        "CFBundleName": APP_NAME[:15],
+        "CFBundleName": APP_NAME,
         "CFBundleDisplayName": APP_NAME,
         "CFBundleIdentifier": "de.n00b.rgm3800",
         "CFBundleShortVersionString": "0.1.2",
